@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Excel Search Dashboard</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: linear-gradient(to right, #f0f8ff, #e6f7ff);
+      color: #333;
+      padding: 30px;
+    }
+    h1 {
+      color: #007acc;
+      text-shadow: 1px 1px 2px #ccc;
+    }
+    input[type="text"], input[type="password"] {
+      padding: 10px;
+      margin: 10px 0;
+      border: 2px solid #007acc;
+      border-radius: 5px;
+      width: 300px;
+    }
+    button {
+      padding: 10px 15px;
+      margin: 5px;
+      border: none;
+      border-radius: 5px;
+      background-color: #007acc;
+      color: white;
+      cursor: pointer;
+      box-shadow: 1px 1px 5px #aaa;
+      transition: background-color 0.3s ease;
+    }
+    button:hover {
+      background-color: #005f99;
+    }
+    .hidden { display: none; }
+    #results, #adminPanel {
+      margin-top: 20px;
+      background-color: #f9f9f9;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 0 10px #ccc;
+      overflow-x: auto;
+    }
+    table {
+      min-width: 800px;
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 10px;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 12px;
+      text-align: left;
+    }
+    th {
+      background-color: #e0f0ff;
+      font-weight: bold;
+    }
+    #timestamp {
+      margin-top: 30px;
+      font-style: italic;
+      color: #555;
+    }
+    .highlight-0 { background-color: #ffeb3b; font-weight: bold; }
+    .highlight-1 { background-color: #8bc34a; font-weight: bold; }
+    .highlight-2 { background-color: #03a9f4; font-weight: bold; }
+    .highlight-3 { background-color: #e91e63; font-weight: bold; }
+    .highlight-4 { background-color: #ff9800; font-weight: bold; }
+    .highlight-5 { background-color: #9c27b0; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>📊 Excel Search Dashboard By Shakeel</h1>
+
+  <p id="timestamp">Page loaded: <span id="lastUpdated"></span></p>
+
+  <input type="text" id="searchInput" placeholder="Search keywords separated by commas..." />
+  <button onclick="performSearch()">Search</button>
+  <button onclick="showAdminLogin()">Admin Mode</button>
+
+  <div id="results" class="hidden">
+    <p><strong>Excel Source:</strong> <span id="excelUploadDate">Fetching...</span></p>
+    <p>Total Matches: <span id="totalMatches">0</span></p>
+    <p id="perTermMatches"></p>
+    <h3>🔎 Search Results</h3>
+    <div id="resultText"></div>
+    <div id="exportButtons" style="margin-top: 15px;">
+      <button onclick="exportToExcel()">📊 Export to Excel</button>
+      <button onclick="printResults()">🖨️ Download as PDF</button>
+    </div>
+  </div>
+
+  <!-- Admin Login -->
+  <div id="adminLogin" class="hidden">
+    <h3>🔐 Admin Login</h3>
+    <input type="text" id="adminUser" placeholder="Username" /><br>
+    <input type="password" id="adminPass" placeholder="Password" /><br>
+    <button onclick="checkAdminLogin()">Login</button>
+  </div>
+
+  <!-- Admin Panel -->
+  <div id="adminPanel" class="hidden">
+    <h3>📋 Admin Panel - Search Logs</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>IP Address</th>
+          <th>Device Name</th>
+          <th>Date & Time</th>
+          <th>Search Query</th>
+        </tr>
+      </thead>
+      <tbody id="logTable"></tbody>
+    </table>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <script>
+    let excelData = [];
+    let searchLogs = [];
+    const highlightColors = ["highlight-0", "highlight-1", "highlight-2", "highlight-3", "highlight-4", "highlight-5"];
+
+    // Load Excel file from GitHub (using raw link)
+    async function loadExcelFromGitHub() {
+      try {
+        const response = await fetch("https://raw.githubusercontent.com/shakeelsnu/Test-Shak/main/testdata.xlsx");
+        const arrayBuffer = await response.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, { type: "array" });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        excelData = XLSX.utils.sheet_to_json(sheet);
+        document.getElementById("excelUploadDate").innerText = new Date().toLocaleString();
+      } catch (error) {
+        console.error("Error loading Excel from GitHub:", error);
+        document.getElementById("excelUploadDate").innerText = "❌ Failed to load file";
+      }
+    }
+
+    async function getClientIP() {
+      try {
+        const response = await fetch("https://api.ipify.org?format=json");
+        const data = await response.json();
+        return data.ip;
+      } catch (e) {
+        return "IP not available";
+      }
+    }
+
+    function getDeviceName() {
+      return navigator.userAgent || "Device name not available";
+    }
+
+    async function performSearch() {
+      const input = document.getElementById("searchInput").value.trim();
+      const resultText = document.getElementById("resultText");
+      const resultsContainer = document.getElementById("results");
+
+      if (!input) {
+        resultText.innerHTML = "<p>Please type something to search.</p>";
+        resultsContainer.classList.remove("hidden");
+        document.getElementById("totalMatches").innerText = "0";
+        document.getElementById("perTermMatches").innerText = "";
+        return;
+      }
+
+      const terms = input.split(",").map(term => term.trim().toLowerCase());
+
+      if (excelData.length === 0) {
+        resultText.innerHTML = "<p>No data loaded from GitHub.</p>";
+        resultsContainer.classList.remove("hidden");
+        return;
+      }
+
+      let tableHtml = `<table>
+        <thead><tr>${Object.keys(excelData[0]).map(h => `<th>${h}</th>`).join("")}</tr></thead>
+        <tbody>`;
+
+      let totalMatches = 0;
+      const matchesPerTerm = new Map();
+
+      excelData.forEach(row => {
+        let rowMatched = false;
+        let rowHtml = "<tr>";
+        Object.values(row).forEach(val => {
+          let cell = String(val || "");
+          terms.forEach((term, idx) => {
+            const regex = new RegExp(`(${term})`, "gi");
+            if (regex.test(cell)) {
+              rowMatched = true;
+              cell = cell.replace(regex, `<span class='${highlightColors[idx % highlightColors.length]}'>$1</span>`);
+              matchesPerTerm.set(term, (matchesPerTerm.get(term) || 0) + 1);
+              totalMatches++;
+            }
+          });
+          rowHtml += `<td>${cell}</td>`;
+        });
+        rowHtml += "</tr>";
+        if (rowMatched) tableHtml += rowHtml;
+      });
+
+      tableHtml += "</tbody></table>";
+      document.getElementById("totalMatches").innerText = totalMatches;
+
+      if (matchesPerTerm.size > 0) {
+        const termStrings = [];
+        matchesPerTerm.forEach((count, term) => {
+          const colorClass = highlightColors[terms.indexOf(term) % highlightColors.length];
+          termStrings.push(`<span class='${colorClass}'><b>${term}</b></span>: ${count}`);
+        });
+        document.getElementById("perTermMatches").innerHTML = "Matches per keyword: " + termStrings.join(", ");
+      } else {
+        document.getElementById("perTermMatches").innerHTML = "No keywords matched.";
+      }
+
+      resultText.innerHTML = totalMatches > 0 ? tableHtml : "<p>No matches found.</p>";
+      resultsContainer.classList.remove("hidden");
+
+      const ip = await getClientIP();
+      const device = getDeviceName();
+      searchLogs.push({ ip, device, time: new Date().toLocaleString(), query: input });
+    }
+
+    function exportToExcel() {
+      const allTables = document.querySelectorAll("#resultText table");
+      if (allTables.length === 0) {
+        alert("No results to export.");
+        return;
+      }
+      const workbook = XLSX.utils.book_new();
+      allTables.forEach((table, index) => {
+        const worksheet = XLSX.utils.table_to_sheet(table);
+        const sheetName = `Results Sheet ${index + 1}`;
+        XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+      });
+      XLSX.writeFile(workbook, "search_results.xlsx");
+    }
+
+    function printResults() {
+      const printWindow = window.open("", "", "width=800,height=600");
+      const content = document.getElementById("resultText").innerHTML;
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>Search Results</title>
+            <style>
+              table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+              th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+              th { background-color: #e0f0ff; font-weight: bold; }
+              .highlight-0 { background-color: #ffeb3b; font-weight: bold; }
+              .highlight-1 { background-color: #8bc34a; font-weight: bold; }
+              .highlight-2 { background-color: #03a9f4; font-weight: bold; }
+              .highlight-3 { background-color: #e91e63; font-weight: bold; }
+              .highlight-4 { background-color: #ff9800; font-weight: bold; }
+              .highlight-5 { background-color: #9c27b0; font-weight: bold; }
+            </style>
+          </head>
+          <body>
+            <h3>Search Results</h3>
+            ${content}
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.focus();
+      printWindow.print();
+    }
+
+    function showAdminLogin() {
+      document.getElementById("adminLogin").classList.remove("hidden");
+    }
+
+    function checkAdminLogin() {
+      const user = document.getElementById("adminUser").value.trim().toLowerCase();
+      const pass = document.getElementById("adminPass").value.trim();
+      if (user === "shak" && pass === "9332") {
+        document.getElementById("adminLogin").classList.add("hidden");
+        document.getElementById("adminPanel").classList.remove("hidden");
+        loadLogs();
+      } else {
+        alert("Invalid credentials!");
+      }
+    }
+
+    function loadLogs() {
+      const logTable = document.getElementById("logTable");
+      logTable.innerHTML = "";
+      searchLogs.forEach(log => {
+        logTable.innerHTML += `<tr>
+          <td>${log.ip}</td>
+          <td>${log.device}</td>
+          <td>${log.time}</td>
+          <td>${log.query}</td>
+        </tr>`;
+      });
+    }
+
+    window.onload = function() {
+      document.getElementById("lastUpdated").innerText = new Date().toLocaleString();
+      loadExcelFromGitHub();
+      document.getElementById("searchInput").addEventListener("keypress", function(e) {
+        if (e.key === "Enter") performSearch();
+      });
+    };
+  </script>
+</body>
+</html>
